@@ -95,6 +95,7 @@ def test_summary_cost_matches_hand_math():
     pf = prefill_seconds(H100, QWEN, 1000)
     assert summary.usd_per_million_output_tokens == pytest.approx(4.41 * pf / 3600 * 1e6)
     assert summary.output_tokens_per_s == pytest.approx(1 / pf)
+    assert summary.usd_per_1k_requests == pytest.approx(4.41 * pf / 3600 * 1000)  # 1 request
 
 
 MI300X = load_gpus()["MI300X"]
