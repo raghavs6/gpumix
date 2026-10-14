@@ -35,6 +35,9 @@ $/M out  provider      setup                                                    
 ...
 ```
 
+Full reports with charts for both public Azure traces: [chat](reports/azure-chat.md) and
+[coding](reports/azure-code.md).
+
 Traffic files are JSONL, one request per line: `{"arrival_s": 0.0, "input_tokens": 1000, "output_tokens": 200}`.
 The default latency limits are MLPerf's for Llama 3.1 8B (`--target interactive` for the strict ones).
 
