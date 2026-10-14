@@ -20,9 +20,11 @@ preempt. Every number here is MODELLED, NOT MEASURED.
 
 import math
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 from gpumix.gpus import GPU
+from gpumix.links import Link, transfer_seconds
 from gpumix.memory import memory_fit
 from gpumix.models import Model
 from gpumix.perf import step_seconds
@@ -85,6 +87,7 @@ class Served:
 class Run:
     served: list[Served]
     end_s: float  # clock time the last request finished
+    gpus: dict[str, int]  # GPU name -> how many are billed for the whole run
 
 
 def simulate(
@@ -94,11 +97,14 @@ def simulate(
     chunked_prefill: bool = True,
     token_budget: int | None = None,
     max_seqs: int | None = None,
+    prefilled: bool = False,
 ) -> Run:
     """Replay `requests` (sorted by arrival) through one GPU.
 
     `token_budget` (tokens per step, chunked mode only) and `max_seqs`
     (conversations in progress at once) default to vLLM's values for this GPU.
+    With `prefilled`, prompts arrive already in the KV cache (sent by a
+    prefill GPU), so this GPU only decodes: the first token takes one step.
     Raises ValueError if a single request needs more KV cache than the GPU has.
     """
     default_budget, default_seqs = vllm_defaults(gpu)
@@ -130,6 +136,12 @@ def simulate(
         if not waiting and not running:
             now = upcoming[0].request.arrival_s  # GPU idles until the next arrival
             continue
+
+        while prefilled and can_admit():  # KV already here: join the decodes now
+            s = waiting.popleft()
+            reserved += size(s)
+            running.append(s)
+            s.prefilled = s.request.input_tokens
 
         decoding = [s for s in running if s.prefilled == s.request.input_tokens]
         chunks: list[tuple[Served, int]] = []  # (request, prompt tokens this step)
@@ -169,7 +181,64 @@ def simulate(
             reserved -= size(s)
             running.remove(s)
 
-    return Run(served=served, end_s=now)
+    return Run(served=served, end_s=now, gpus={gpu.name: 1})
+
+
+def simulate_replicas(
+    gpu: GPU, model: Model, requests: list[Request], count: int, **options: Any
+) -> Run:
+    """Replay `requests` through `count` identical GPUs that each do both jobs.
+
+    Requests are dealt out in turn (round robin), the way vLLM's own proxy
+    routes, so each GPU runs independently. `options` go to `simulate`.
+    """
+    served: list[Served] = [Served(r) for r in requests]
+    end_s = 0.0
+    for k in range(count):
+        run = simulate(gpu, model, requests[k::count], **options)
+        served[k::count] = run.served
+        end_s = max(end_s, run.end_s)
+    return Run(served=served, end_s=end_s, gpus={gpu.name: count})
+
+
+def simulate_split(
+    prefill_gpu: GPU,
+    decode_gpu: GPU,
+    model: Model,
+    requests: list[Request],
+    link: Link,
+    prefill_count: int = 1,
+    decode_count: int = 1,
+    **options: Any,
+) -> Run:
+    """Replay `requests` through separate prefill and decode GPUs.
+
+    Works like vLLM's disaggregated proxy: the prompt runs on a prefill GPU,
+    its KV cache crosses `link`, then a decode GPU writes the whole answer,
+    so the user's first token comes from the decode GPU. Both pools use
+    round robin. Prefill GPUs never wait on decode GPUs, so the two pools
+    run as two passes. Each transfer gets the whole link to itself, and the
+    prefill GPU frees the prompt's KV as soon as the prompt is done.
+    """
+    for gpu in (prefill_gpu, decode_gpu):
+        if gpu.vendor not in link.vendors:
+            raise ValueError(f"{link.name} can't connect {gpu.vendor} GPUs")
+
+    prompts = [r.model_copy(update={"output_tokens": 1}) for r in requests]
+    prefill = simulate_replicas(prefill_gpu, model, prompts, prefill_count, **options)
+    landed = [
+        s.finish_s + transfer_seconds(model, s.request.input_tokens, link) for s in prefill.served
+    ]
+    order = sorted(range(len(requests)), key=lambda i: landed[i])
+    handoffs = [requests[i].model_copy(update={"arrival_s": landed[i]}) for i in order]
+    decode = simulate_replicas(decode_gpu, model, handoffs, decode_count, prefilled=True, **options)
+
+    served = [Served(r) for r in requests]
+    for i, s in zip(order, decode.served, strict=True):
+        served[i] = replace(s, request=requests[i])  # time-to-first-token from the real arrival
+    gpus = {prefill_gpu.name: prefill_count}
+    gpus[decode_gpu.name] = gpus.get(decode_gpu.name, 0) + decode_count
+    return Run(served=served, end_s=decode.end_s, gpus=gpus)
 
 
 @dataclass(frozen=True)
@@ -189,11 +258,13 @@ def percentile(values: list[float], p: float) -> float:
     return ordered[max(0, math.ceil(p / 100 * len(ordered)) - 1)]
 
 
-def summarize(run: Run, usd_per_gpu_hour: float) -> Summary:
+def summarize(run: Run, usd_per_gpu_hour: dict[str, float]) -> Summary:
     """Latency percentiles, throughput, and cost per million output tokens.
 
-    The GPU is billed from time 0 to the last finish, idle time included.
+    Every GPU is billed from time 0 to the last finish, idle time included.
+    `usd_per_gpu_hour` maps GPU name to price, like a provider's price list.
     """
+    usd_per_hour = sum(usd_per_gpu_hour[name] * n for name, n in run.gpus.items())
     ttfts = [s.ttft for s in run.served]
     tpots = [s.tpot for s in run.served if not math.isnan(s.tpot)]
     gaps = [s.max_gap_s for s in run.served if s.request.output_tokens > 1]
@@ -205,5 +276,5 @@ def summarize(run: Run, usd_per_gpu_hour: float) -> Summary:
         tpot_p99_s=percentile(tpots, 99) if tpots else math.nan,
         max_gap_p99_s=percentile(gaps, 99) if gaps else math.nan,
         output_tokens_per_s=tokens / run.end_s,
-        usd_per_million_output_tokens=usd_per_gpu_hour * run.end_s / 3600 / tokens * 1e6,
+        usd_per_million_output_tokens=usd_per_hour * run.end_s / 3600 / tokens * 1e6,
     )

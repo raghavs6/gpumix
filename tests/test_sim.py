@@ -1,10 +1,18 @@
 import pytest
 
 from gpumix.gpus import load_gpus
+from gpumix.links import load_links, transfer_seconds
 from gpumix.memory import memory_fit
 from gpumix.models import load_models
 from gpumix.perf import decode_step_seconds, prefill_seconds, step_seconds
-from gpumix.sim import percentile, simulate, summarize, vllm_defaults
+from gpumix.sim import (
+    percentile,
+    simulate,
+    simulate_replicas,
+    simulate_split,
+    summarize,
+    vllm_defaults,
+)
 from gpumix.traffic import Request, synth
 
 H100 = load_gpus()["H100-SXM"]
@@ -83,7 +91,7 @@ def test_percentile_nearest_rank():
 def test_summary_cost_matches_hand_math():
     # one request: 1000 in, 1 out. Billed time = prefill. Cost = $4.41/h x time / 1 token x 1e6
     run = simulate(H100, QWEN, [req(0, 1000, 1)])
-    summary = summarize(run, usd_per_gpu_hour=4.41)
+    summary = summarize(run, usd_per_gpu_hour={"H100-SXM": 4.41})
     pf = prefill_seconds(H100, QWEN, 1000)
     assert summary.usd_per_million_output_tokens == pytest.approx(4.41 * pf / 3600 * 1e6)
     assert summary.output_tokens_per_s == pytest.approx(1 / pf)
@@ -134,3 +142,85 @@ def test_max_seqs_makes_requests_queue():
     run = simulate(H100, QWEN, [req(0, 100, 3), req(0, 100, 3)], max_seqs=1)
     a, b = run.served
     assert b.first_token_s > a.finish_s  # b is admitted only after a leaves
+
+
+def test_one_replica_is_the_plain_simulator():
+    traffic = synth(200, rate_per_s=5, median_input_tokens=800, median_output_tokens=200, seed=4)
+    one = simulate(H100, QWEN, traffic)
+    rep = simulate_replicas(H100, QWEN, traffic, count=1)
+    assert [s.finish_s for s in rep.served] == [s.finish_s for s in one.served]
+
+
+def test_two_replicas_serve_simultaneous_requests_in_parallel():
+    # one GPU puts both prompts in one 2000-token step; two GPUs each run 1000
+    traffic = [req(0, 1000, 1), req(0, 1000, 1)]
+    run = simulate_replicas(H100, QWEN, traffic, count=2)
+    pf = prefill_seconds(H100, QWEN, 1000)
+    assert [s.ttft for s in run.served] == [pytest.approx(pf), pytest.approx(pf)]
+    assert simulate(H100, QWEN, traffic).served[1].ttft > pf
+
+
+def test_replicas_keep_request_order():
+    traffic = [req(0, 1000 + i, 1) for i in range(5)]
+    run = simulate_replicas(H100, QWEN, traffic, count=2)
+    assert [s.request for s in run.served] == traffic
+
+
+def test_every_replica_is_billed_even_when_idle():
+    # one request on two GPUs: the second GPU sits idle but is still rented
+    traffic = [req(0, 1000, 1)]
+    one = summarize(simulate(H100, QWEN, traffic), usd_per_gpu_hour={"H100-SXM": 4.41})
+    two = summarize(
+        simulate_replicas(H100, QWEN, traffic, count=2), usd_per_gpu_hour={"H100-SXM": 4.41}
+    )
+    assert two.usd_per_million_output_tokens == pytest.approx(2 * one.usd_per_million_output_tokens)
+
+
+IB = load_links()["infiniband-400g"]
+
+
+def test_split_lone_request_hand_math():
+    # prefill on GPU 1, KV over the link, then GPU 2 decodes every answer token
+    run = simulate_split(H100, H100, QWEN, [req(0, 1000, 5)], IB)
+    s = run.served[0]
+    first = (
+        prefill_seconds(H100, QWEN, 1000)  # 4.9 ms
+        + transfer_seconds(QWEN, 1000, IB)  # 147 MB at 50 GB/s = 2.9 ms
+        + decode_step_seconds(H100, QWEN, 1, 1000)  # decode GPU writes token 1
+    )
+    assert s.ttft == pytest.approx(first)
+    rest = sum(decode_step_seconds(H100, QWEN, 1, 1000 + k) for k in range(1, 5))
+    assert s.finish_s == pytest.approx(first + rest)
+
+
+def test_split_long_prompt_never_stalls_decoders():
+    # same scenario as the chunked test: a is answering when a 60k prompt lands.
+    # Here the prompt runs on the other GPU, so a only ever waits one decode step.
+    traffic = [req(0, 100, 50), req(0.001, 60_000, 1)]
+    a = simulate_split(H100, H100, QWEN, traffic, IB).served[0]
+    worst = decode_step_seconds(H100, QWEN, 2, 100 + 50 + 60_000)  # a and b decode together
+    assert a.max_gap_s <= worst * (1 + 1e-9)
+
+
+def test_split_keeps_request_order_and_finishes_everything():
+    traffic = synth(300, rate_per_s=5, median_input_tokens=800, median_output_tokens=200, seed=3)
+    run = simulate_split(H100, H100, QWEN, traffic, IB, decode_count=2)
+    assert [s.request for s in run.served] == traffic
+    assert all(s.generated == s.request.output_tokens for s in run.served)
+    assert run.gpus == {"H100-SXM": 3}
+
+
+def test_split_rejects_a_link_that_cannot_join_the_gpus():
+    nvlink = load_links()["nvlink-h100"]
+    with pytest.raises(ValueError, match="can't connect amd"):
+        simulate_split(H100, MI300X, QWEN, [req(0, 1000, 1)], nvlink)
+
+
+def test_cross_vendor_split_bills_each_gpu_at_its_price():
+    run = simulate_split(H100, MI300X, QWEN, [req(0, 1000, 1)], IB)
+    prices = {"H100-SXM": 4.41, "MI300X": 2.59}
+    summary = summarize(run, usd_per_gpu_hour=prices)
+    assert run.gpus == {"H100-SXM": 1, "MI300X": 1}
+    assert summary.usd_per_million_output_tokens == pytest.approx(
+        (4.41 + 2.59) * run.end_s / 3600 * 1e6
+    )
