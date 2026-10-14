@@ -4,7 +4,7 @@ from gpumix.gpus import load_gpus
 from gpumix.memory import memory_fit
 from gpumix.models import load_models
 from gpumix.perf import decode_step_seconds, prefill_seconds, step_seconds
-from gpumix.sim import percentile, simulate, summarize, vllm_defaults
+from gpumix.sim import percentile, simulate, simulate_replicas, summarize, vllm_defaults
 from gpumix.traffic import Request, synth
 
 H100 = load_gpus()["H100-SXM"]
@@ -134,3 +134,33 @@ def test_max_seqs_makes_requests_queue():
     run = simulate(H100, QWEN, [req(0, 100, 3), req(0, 100, 3)], max_seqs=1)
     a, b = run.served
     assert b.first_token_s > a.finish_s  # b is admitted only after a leaves
+
+
+def test_one_replica_is_the_plain_simulator():
+    traffic = synth(200, rate_per_s=5, median_input_tokens=800, median_output_tokens=200, seed=4)
+    one = simulate(H100, QWEN, traffic)
+    rep = simulate_replicas(H100, QWEN, traffic, count=1)
+    assert [s.finish_s for s in rep.served] == [s.finish_s for s in one.served]
+
+
+def test_two_replicas_serve_simultaneous_requests_in_parallel():
+    # one GPU puts both prompts in one 2000-token step; two GPUs each run 1000
+    traffic = [req(0, 1000, 1), req(0, 1000, 1)]
+    run = simulate_replicas(H100, QWEN, traffic, count=2)
+    pf = prefill_seconds(H100, QWEN, 1000)
+    assert [s.ttft for s in run.served] == [pytest.approx(pf), pytest.approx(pf)]
+    assert simulate(H100, QWEN, traffic).served[1].ttft > pf
+
+
+def test_replicas_keep_request_order():
+    traffic = [req(0, 1000 + i, 1) for i in range(5)]
+    run = simulate_replicas(H100, QWEN, traffic, count=2)
+    assert [s.request for s in run.served] == traffic
+
+
+def test_every_replica_is_billed_even_when_idle():
+    # one request on two GPUs: the second GPU sits idle but is still rented
+    traffic = [req(0, 1000, 1)]
+    one = summarize(simulate(H100, QWEN, traffic), usd_per_gpu_hour=4.41)
+    two = summarize(simulate_replicas(H100, QWEN, traffic, count=2), usd_per_gpu_hour=4.41)
+    assert two.usd_per_million_output_tokens == pytest.approx(2 * one.usd_per_million_output_tokens)

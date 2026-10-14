@@ -21,6 +21,7 @@ preempt. Every number here is MODELLED, NOT MEASURED.
 import math
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
 
 from gpumix.gpus import GPU
 from gpumix.memory import memory_fit
@@ -85,6 +86,7 @@ class Served:
 class Run:
     served: list[Served]
     end_s: float  # clock time the last request finished
+    gpus: int = 1  # GPUs billed for the whole run
 
 
 def simulate(
@@ -172,6 +174,23 @@ def simulate(
     return Run(served=served, end_s=now)
 
 
+def simulate_replicas(
+    gpu: GPU, model: Model, requests: list[Request], count: int, **options: Any
+) -> Run:
+    """Replay `requests` through `count` identical GPUs that each do both jobs.
+
+    Requests are dealt out in turn (round robin), the way vLLM's own proxy
+    routes, so each GPU runs independently. `options` go to `simulate`.
+    """
+    served: list[Served] = [Served(r) for r in requests]
+    end_s = 0.0
+    for k in range(count):
+        run = simulate(gpu, model, requests[k::count], **options)
+        served[k::count] = run.served
+        end_s = max(end_s, run.end_s)
+    return Run(served=served, end_s=end_s, gpus=count)
+
+
 @dataclass(frozen=True)
 class Summary:
     ttft_p50_s: float
@@ -192,7 +211,7 @@ def percentile(values: list[float], p: float) -> float:
 def summarize(run: Run, usd_per_gpu_hour: float) -> Summary:
     """Latency percentiles, throughput, and cost per million output tokens.
 
-    The GPU is billed from time 0 to the last finish, idle time included.
+    Every GPU is billed from time 0 to the last finish, idle time included.
     """
     ttfts = [s.ttft for s in run.served]
     tpots = [s.tpot for s in run.served if not math.isnan(s.tpot)]
@@ -205,5 +224,5 @@ def summarize(run: Run, usd_per_gpu_hour: float) -> Summary:
         tpot_p99_s=percentile(tpots, 99) if tpots else math.nan,
         max_gap_p99_s=percentile(gaps, 99) if gaps else math.nan,
         output_tokens_per_s=tokens / run.end_s,
-        usd_per_million_output_tokens=usd_per_gpu_hour * run.end_s / 3600 / tokens * 1e6,
+        usd_per_million_output_tokens=usd_per_gpu_hour * run.gpus * run.end_s / 3600 / tokens * 1e6,
     )
