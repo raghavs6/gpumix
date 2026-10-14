@@ -3,8 +3,8 @@ import pytest
 from gpumix.gpus import load_gpus
 from gpumix.memory import memory_fit
 from gpumix.models import load_models
-from gpumix.perf import decode_step_seconds, prefill_seconds
-from gpumix.sim import percentile, simulate, summarize
+from gpumix.perf import decode_step_seconds, prefill_seconds, step_seconds
+from gpumix.sim import percentile, simulate, summarize, vllm_defaults
 from gpumix.traffic import Request, synth
 
 H100 = load_gpus()["H100-SXM"]
@@ -37,7 +37,8 @@ def test_ttft_counts_from_arrival_after_idle_gap():
 
 
 def test_second_request_waits_for_first_prefill():
-    run = simulate(H100, QWEN, [req(0, 1000, 3), req(0, 1000, 3)])
+    # plain mode: each prompt is its own step
+    run = simulate(H100, QWEN, [req(0, 1000, 3), req(0, 1000, 3)], chunked_prefill=False)
     a, b = run.served
     pf = prefill_seconds(H100, QWEN, 1000)
     assert a.ttft == pytest.approx(pf)
@@ -54,7 +55,7 @@ def test_two_requests_share_decode_steps():
 def test_full_kv_cache_makes_requests_queue():
     cap = memory_fit(H100, QWEN).kv_tokens  # 377,061 tokens
     big = cap // 2 + 1  # two of these can't fit at once
-    run = simulate(H100, QWEN, [req(0, big - 1, 1), req(0, big - 1, 1)])
+    run = simulate(H100, QWEN, [req(0, big - 1, 1), req(0, big - 1, 1)], chunked_prefill=False)
     a, b = run.served
     # b can only start after a finishes and frees its room
     assert b.first_token_s == pytest.approx(a.finish_s + prefill_seconds(H100, QWEN, big - 1))
@@ -86,3 +87,50 @@ def test_summary_cost_matches_hand_math():
     pf = prefill_seconds(H100, QWEN, 1000)
     assert summary.usd_per_million_output_tokens == pytest.approx(4.41 * pf / 3600 * 1e6)
     assert summary.output_tokens_per_s == pytest.approx(1 / pf)
+
+
+MI300X = load_gpus()["MI300X"]
+
+
+def test_vllm_defaults_per_gpu():
+    # 80 GB H100 is in the >= 70 GiB tier; 192 GB MI300X is in the >= 160 GiB tier
+    assert vllm_defaults(H100) == (8192, 1024)
+    assert vllm_defaults(MI300X) == (16384, 1024)
+
+
+def test_chunked_lone_short_request_matches_plain():
+    # a prompt that fits in one budget is one step either way
+    for chunked in (True, False):
+        run = simulate(H100, QWEN, [req(0, 1000, 5)], chunked_prefill=chunked)
+        assert run.served[0].ttft == pytest.approx(prefill_seconds(H100, QWEN, 1000))
+
+
+def test_chunked_long_prompt_is_split_across_steps():
+    # 20,000 tokens with an 8192 budget: chunks of 8192, 8192, 3616.
+    # Each later chunk reads the KV the earlier chunks wrote.
+    run = simulate(H100, QWEN, [req(0, 20_000, 1)])
+    expected = (
+        step_seconds(H100, QWEN, 8192, 0)
+        + step_seconds(H100, QWEN, 8192, 8192)
+        + step_seconds(H100, QWEN, 3616, 16384)
+    )
+    assert run.served[0].ttft == pytest.approx(expected)
+
+
+def test_chunked_long_prompt_does_not_stall_decoders():
+    # a is writing its answer when a 60k prompt arrives. Plain mode stops a
+    # for the whole prompt; chunked mode keeps giving a a token every step.
+    traffic = [req(0, 100, 50), req(0.001, 60_000, 1)]
+    plain = simulate(H100, QWEN, traffic, chunked_prefill=False).served[0]
+    mixed = simulate(H100, QWEN, traffic).served[0]
+    assert plain.max_gap_s >= prefill_seconds(H100, QWEN, 60_000)
+    # worst chunked step: one decode plus a full chunk on top of earlier chunks
+    worst = step_seconds(H100, QWEN, 8192, 100 + 50 + 60_000)
+    assert mixed.max_gap_s <= worst * (1 + 1e-9)
+    assert mixed.max_gap_s < plain.max_gap_s / 5
+
+
+def test_max_seqs_makes_requests_queue():
+    run = simulate(H100, QWEN, [req(0, 100, 3), req(0, 100, 3)], max_seqs=1)
+    a, b = run.served
+    assert b.first_token_s > a.finish_s  # b is admitted only after a leaves
