@@ -33,7 +33,7 @@ def memory_fit(
     defaults to 2 (BF16).
     """
     usable = gpu.memory_gb * GB * utilization
-    weights = model.params_b * 1e9 * bytes_per_param
+    weights = model.weight_bytes(bytes_per_param)
     kv_room = max(usable - weights, 0.0)
     return MemoryFit(
         weights_gb=weights / GB,
