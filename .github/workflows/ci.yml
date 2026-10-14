@@ -1,0 +1,31 @@
+name: CI
+
+# Every push runs CI; PRs come from branches in this repo, so they show the push's result.
+on: push
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      # --locked fails if uv.lock is out of date with pyproject.toml.
+      - name: Install
+        run: uv sync --locked --extra dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy src tests
+
+      - name: Test
+        run: uv run pytest
