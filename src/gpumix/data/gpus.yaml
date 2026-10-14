@@ -22,3 +22,54 @@
   source: https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html
   checked: 2026-10-14
   note: Page lists "Peak bfloat16" as 1.3 PFLOPs dense (2.61 with sparsity).
+
+- name: H200-SXM
+  vendor: nvidia
+  bf16_dense_tflops: 989.5
+  mem_bandwidth_tbps: 4.8
+  memory_gb: 141
+  source: https://www.nvidia.com/en-us/data-center/h200/
+  checked: 2026-10-14
+  note: Page lists 1,979 BF16 TFLOPS "with sparsity"; dense is half. Table is marked "Preliminary specifications".
+
+- name: B200
+  vendor: nvidia
+  bf16_dense_tflops: 2250
+  mem_bandwidth_tbps: 8.0
+  memory_gb: 180
+  source: https://www.nvidia.com/en-us/data-center/hgx/
+  checked: 2026-10-14
+  note: >-
+    No single-GPU page, so these are the 8-GPU HGX B200 board divided by 8.
+    Page lists 36 PFLOPS BF16, footnoted "Specification in Sparse. Dense is ½
+    sparse spec shown": 36 / 8 / 2 = 2.25 PFLOPS. Memory 1.4 TB / 8 (NVIDIA's
+    HGX B200 PCF summary says 180 GB each). Bandwidth is from the DGX B200 page
+    (https://www.nvidia.com/en-us/data-center/dgx-b200/), 64 TB/s / 8; the HGX
+    B200 PCF summary says "up to 62 TB/s" (7.75 each).
+
+- name: L40S
+  vendor: nvidia
+  bf16_dense_tflops: 362.05
+  mem_bandwidth_tbps: 0.864
+  memory_gb: 48
+  source: https://www.nvidia.com/en-us/data-center/l40s/
+  checked: 2026-10-14
+  note: Page lists BF16 as "362.05 | 733*" (* with sparsity). PCIe card with GDDR6, not HBM.
+
+- name: MI325X
+  vendor: amd
+  bf16_dense_tflops: 1300
+  mem_bandwidth_tbps: 6.0
+  memory_gb: 256
+  source: https://amd.com/en/products/accelerators/instinct/mi300/mi325x.html
+  checked: 2026-10-14
+  note: Page lists "Peak bfloat16" as 1.3 PFLOPs dense (2.61 with sparsity).
+
+- name: MI355X
+  vendor: amd
+  bf16_dense_tflops: 2500
+  mem_bandwidth_tbps: 8.0
+  memory_gb: 288
+  source: https://www.amd.com/en/products/accelerators/instinct/mi350/mi355x.html
+  checked: 2026-10-14
+  note: Page lists "Peak bfloat16 (BF16) Matrix Performance" as 2.5 PFLOPs dense (5 with sparsity).
