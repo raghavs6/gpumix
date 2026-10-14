@@ -1,0 +1,13 @@
+# Model shapes used by the memory check and the performance model.
+#
+# Shapes are copied from the model's config.json on Hugging Face, and the
+# parameter count from its model card. `checked` is the day we read them.
+
+- name: qwen3-8b
+  params_b: 8.2
+  layers: 36
+  kv_heads: 8
+  head_dim: 128
+  source: https://huggingface.co/Qwen/Qwen3-8B/blob/main/config.json
+  checked: 2026-10-14
+  note: Model card lists 8.2B parameters (6.95B without embeddings).
