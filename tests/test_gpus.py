@@ -52,5 +52,5 @@ def test_non_positive_number_is_rejected(tmp_path):
 
 
 def test_duplicate_name_is_rejected(tmp_path):
-    with pytest.raises(ValueError, match="duplicate GPU name: H100-SXM"):
+    with pytest.raises(ValueError, match="duplicate name: H100-SXM"):
         load_gpus(write(tmp_path, H100 + H100))
