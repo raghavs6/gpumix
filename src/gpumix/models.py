@@ -19,6 +19,10 @@ class Model(Entry):
     checked: date
     note: str | None = None
 
+    def weight_bytes(self, bytes_per_param: int = 2) -> float:
+        """Size of the weights. The default of 2 bytes per parameter is BF16."""
+        return self.params_b * 1e9 * bytes_per_param
+
     def kv_bytes_per_token(self, bytes_per_value: int = 2) -> int:
         """KV cache size for one token: a key and a value, per KV head, per layer.
 
