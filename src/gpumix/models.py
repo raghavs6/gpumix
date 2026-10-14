@@ -15,6 +15,7 @@ class Model(Entry):
     layers: PositiveInt
     kv_heads: PositiveInt
     head_dim: PositiveInt
+    hidden_size: PositiveInt  # width of the activations swapped between GPUs under TP
     source: HttpUrl
     checked: date
     note: str | None = None

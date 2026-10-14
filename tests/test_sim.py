@@ -184,7 +184,7 @@ def test_split_lone_request_hand_math():
     run = simulate_split(H100, H100, QWEN, [req(0, 1000, 5)], IB)
     s = run.served[0]
     first = (
-        prefill_seconds(H100, QWEN, 1000)  # 4.9 ms
+        prefill_seconds(H100, QWEN, 1000)  # 16.6 ms
         + transfer_seconds(QWEN, 1000, IB)  # 147 MB at 50 GB/s = 2.9 ms
         + decode_step_seconds(H100, QWEN, 1, 1000)  # decode GPU writes token 1
     )
@@ -224,3 +224,27 @@ def test_cross_vendor_split_bills_each_gpu_at_its_price():
     assert summary.usd_per_million_output_tokens == pytest.approx(
         (4.41 + 2.59) * run.end_s / 3600 * 1e6
     )
+
+
+NVLINK = load_links()["nvlink-h100"]
+
+
+def test_tp_group_runs_steps_at_tp_speed_and_bills_every_gpu():
+    run = simulate(H100, QWEN, [req(0, 1000, 1)], tp=2, tp_link=NVLINK)
+    assert run.served[0].ttft == pytest.approx(
+        step_seconds(H100, QWEN, 1000, 0, tp=2, tp_link=NVLINK)
+    )
+    assert run.gpus == {"H100-SXM": 2}
+    assert simulate_replicas(H100, QWEN, [req(0, 1000, 1)], 2, tp=2, tp_link=NVLINK).gpus == {
+        "H100-SXM": 4
+    }
+
+
+def test_tp_split_counts_both_pools():
+    run = simulate_split(H100, H100, QWEN, [req(0, 1000, 2)], IB, tp=2, tp_link=NVLINK)
+    assert run.gpus == {"H100-SXM": 4}
+
+
+def test_tp_on_mi300x_is_refused_without_a_link_that_joins_it():
+    with pytest.raises(ValueError, match="needs a link that joins its GPUs"):
+        simulate(MI300X, QWEN, [req(0, 1000, 1)], tp=2, tp_link=NVLINK)

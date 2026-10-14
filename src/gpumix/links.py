@@ -18,6 +18,10 @@ class Link(Entry):
     source: HttpUrl
     checked: date
     note: str | None = None
+    gpu: str | None = None  # in-machine links: the GPU they join; None for networks
+    allreduce_latency_us: dict[int, PositiveFloat] = {}  # GPU count -> measured delay
+    allreduce_source: HttpUrl | None = None
+    allreduce_note: str | None = None
 
 
 def load_links(path: Path | None = None) -> dict[str, Link]:
@@ -32,3 +36,15 @@ def transfer_seconds(model: Model, tokens: int, link: Link, efficiency: float = 
     ignoring setup cost and protocol overhead.
     """
     return tokens * model.kv_bytes_per_token() / (link.gbytes_per_s * 1e9 * efficiency)
+
+
+def allreduce_seconds(link: Link, gpus: int, nbytes: float) -> float:
+    """Time for `gpus` GPUs to sum an `nbytes` array over `link` (a ring all-reduce).
+
+    A measured fixed delay, plus each GPU sending and receiving
+    2 x (gpus - 1) / gpus of the array. The bandwidth part is ideal.
+    """
+    if gpus not in link.allreduce_latency_us:
+        raise ValueError(f"no measured all-reduce delay for {gpus} GPUs on {link.name}")
+    latency = link.allreduce_latency_us[gpus] * 1e-6
+    return latency + 2 * (gpus - 1) / gpus * nbytes / (link.gbytes_per_s * 1e9)

@@ -9,6 +9,7 @@ Phase 4 calibrates the efficiency factors from real runs.
 """
 
 from gpumix.gpus import GPU
+from gpumix.links import Link, allreduce_seconds
 from gpumix.models import Model
 
 
@@ -32,6 +33,8 @@ def step_seconds(
     cached_tokens: int,
     compute_efficiency: float = 1.0,
     memory_efficiency: float = 1.0,
+    tp: int = 1,
+    tp_link: Link | None = None,
 ) -> float:
     """Time for one forward pass that processes `new_tokens` and reads `cached_tokens` of KV cache.
 
@@ -40,14 +43,24 @@ def step_seconds(
     decode, and steps that mix both (chunked prefill) are all this one rule.
     Attention's own math (which grows with prompt length squared) is left
     out; it is small for prompts of a few thousand tokens.
+
+    With tensor parallelism (`tp` GPUs joined by `tp_link`), each GPU does
+    1/tp of the math and reads 1/tp of the weights and KV, then the GPUs
+    swap results twice per layer. Swaps don't overlap the math.
     """
-    return roofline_seconds(
+    work = roofline_seconds(
         gpu,
-        flops=2 * model.params_b * 1e9 * new_tokens,
-        bytes_read=model.weight_bytes() + cached_tokens * model.kv_bytes_per_token(),
+        flops=2 * model.params_b * 1e9 * new_tokens / tp,
+        bytes_read=(model.weight_bytes() + cached_tokens * model.kv_bytes_per_token()) / tp,
         compute_efficiency=compute_efficiency,
         memory_efficiency=memory_efficiency,
     )
+    if tp == 1:
+        return work
+    if tp_link is None:
+        raise ValueError("tensor parallelism needs a tp_link")
+    swap_bytes = new_tokens * model.hidden_size * 2  # BF16 activations
+    return work + 2 * model.layers * allreduce_seconds(tp_link, tp, swap_bytes)
 
 
 def prefill_seconds(
