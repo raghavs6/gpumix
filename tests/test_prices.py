@@ -26,6 +26,7 @@ def test_shipped_file_loads():
     prices = load_prices()
     assert set(prices) == {"digitalocean", "crusoe"}
     assert prices["digitalocean"].usd_per_gpu_hour["MI300X"] == 2.59
+    assert prices["digitalocean"].usd_per_gpu_hour["H200-SXM"] == 4.47
 
 
 def test_every_priced_gpu_is_in_the_gpu_file():

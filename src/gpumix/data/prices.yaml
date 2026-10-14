@@ -9,15 +9,24 @@
 - name: digitalocean
   usd_per_gpu_hour:
     H100-SXM: 4.41
+    H200-SXM: 4.47
+    L40S: 1.57
     MI300X: 2.59
+    MI325X: 3.80
   source: https://www.digitalocean.com/pricing/gpu-droplets
   checked: 2026-10-14
-  note: Page says "New pricing is effective as of August 1, 2026". H100 is HGX (SXM).
+  note: >-
+    Page says "New pricing is effective as of August 1, 2026". H100 and H200
+    are HGX (SXM). B200 and MI355X are listed only as reserved or spot.
 
 - name: crusoe
   usd_per_gpu_hour:
     H100-SXM: 3.90
+    H200-SXM: 4.29
+    L40S: 1.50
     MI300X: 3.45
   source: https://crusoe.ai/cloud/pricing
   checked: 2026-10-14
-  note: H100 listed as "H100 80GB HGX" (SXM). Page shows no effective date.
+  note: >-
+    H100 and H200 listed as "80GB HGX" and "141GB HGX" (SXM). B200 and MI355X
+    say "Contact sales"; no MI325X. Page shows no effective date.
