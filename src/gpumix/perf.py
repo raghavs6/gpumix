@@ -25,6 +25,31 @@ def roofline_seconds(
     return max(compute_s, memory_s)
 
 
+def step_seconds(
+    gpu: GPU,
+    model: Model,
+    new_tokens: int,
+    cached_tokens: int,
+    compute_efficiency: float = 1.0,
+    memory_efficiency: float = 1.0,
+) -> float:
+    """Time for one forward pass that processes `new_tokens` and reads `cached_tokens` of KV cache.
+
+    Every new token costs about 2 operations per parameter; the weights are
+    read once for the whole step, plus every cached token's KV. Prefill,
+    decode, and steps that mix both (chunked prefill) are all this one rule.
+    Attention's own math (which grows with prompt length squared) is left
+    out; it is small for prompts of a few thousand tokens.
+    """
+    return roofline_seconds(
+        gpu,
+        flops=2 * model.params_b * 1e9 * new_tokens,
+        bytes_read=model.weight_bytes() + cached_tokens * model.kv_bytes_per_token(),
+        compute_efficiency=compute_efficiency,
+        memory_efficiency=memory_efficiency,
+    )
+
+
 def prefill_seconds(
     gpu: GPU,
     model: Model,
@@ -32,19 +57,8 @@ def prefill_seconds(
     compute_efficiency: float = 1.0,
     memory_efficiency: float = 1.0,
 ) -> float:
-    """Time to read a prompt: about 2 operations per parameter per token.
-
-    The weights are read once for the whole prompt. Attention's own math
-    (which grows with prompt length squared) is left out; it is small for
-    prompts of a few thousand tokens.
-    """
-    return roofline_seconds(
-        gpu,
-        flops=2 * model.params_b * 1e9 * prompt_tokens,
-        bytes_read=model.weight_bytes(),
-        compute_efficiency=compute_efficiency,
-        memory_efficiency=memory_efficiency,
-    )
+    """Time to read a whole prompt in one step (nothing cached yet)."""
+    return step_seconds(gpu, model, prompt_tokens, 0, compute_efficiency, memory_efficiency)
 
 
 def decode_step_seconds(
@@ -57,14 +71,9 @@ def decode_step_seconds(
 ) -> float:
     """Time for one decode step: every conversation in the batch writes one token.
 
-    Each step reads the weights once (shared by the batch) plus the KV cache
-    of every conversation. `context_tokens` is the total number of tokens
-    already in the cache, summed over the batch.
+    `context_tokens` is the total number of tokens already in the cache,
+    summed over the batch.
     """
-    return roofline_seconds(
-        gpu,
-        flops=2 * model.params_b * 1e9 * batch_size,
-        bytes_read=model.weight_bytes() + context_tokens * model.kv_bytes_per_token(),
-        compute_efficiency=compute_efficiency,
-        memory_efficiency=memory_efficiency,
+    return step_seconds(
+        gpu, model, batch_size, context_tokens, compute_efficiency, memory_efficiency
     )
