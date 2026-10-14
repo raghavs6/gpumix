@@ -4,7 +4,7 @@ Each phase ends with something we can show. Don't start the next phase until tha
 
 ## Phase 1: Planner core (no GPU needed)
 
-- [ ] Data files: GPU specs (H100, H200, B200, L40S, MI300X, MI325X, MI355X, Gaudi 3), model shapes (8B, 14B, 70B), rental prices with source and date, KV transfer bandwidth (same-vendor vs. cross-vendor).
+- [ ] Data files: GPU specs (H100, H200, B200, L40S, MI300X, MI325X, MI355X), model shapes (8B, 14B, 70B), rental prices with source and date, KV transfer bandwidth (same-vendor vs. cross-vendor).
 - [ ] Performance model: time to prefill a prompt and time per decode step, from each GPU's compute and memory bandwidth, with efficiency factors we later calibrate from real runs.
 - [ ] Memory check: does the model fit, and how much KV cache is left.
 - [ ] Traffic input: JSONL of `arrival_s, input_tokens, output_tokens`, plus a synthetic generator.
