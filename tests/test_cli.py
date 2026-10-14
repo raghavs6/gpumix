@@ -66,3 +66,29 @@ def test_plan_unknown_model_is_a_clear_error(tmp_path):
     result = runner.invoke(app, ["plan", str(out), "--model", "gpt-9"])
     assert result.exit_code == 2
     assert "unknown model" in result.output
+
+
+def test_report_writes_markdown_and_chart(tmp_path):
+    traffic = tmp_path / "t.jsonl"
+    runner.invoke(
+        app,
+        [
+            "synth",
+            "--out",
+            str(traffic),
+            "--requests",
+            "30",
+            "--rate",
+            "0.5",
+            "--input-tokens",
+            "200",
+            "--output-tokens",
+            "50",
+            "--seed",
+            "1",
+        ],
+    )
+    result = runner.invoke(app, ["report", str(traffic), "--out", str(tmp_path / "r.md")])
+    assert result.exit_code == 0
+    assert (tmp_path / "r.md").read_text().startswith("# Which GPUs should you rent for `t.jsonl`?")
+    assert (tmp_path / "r.svg").read_text().startswith("<svg")

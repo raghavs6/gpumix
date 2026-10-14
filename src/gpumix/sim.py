@@ -266,6 +266,7 @@ class Summary:
     max_gap_p99_s: float  # worst stall between tokens, p99 over requests
     output_tokens_per_s: float
     usd_per_million_output_tokens: float
+    usd_per_1k_requests: float
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -275,7 +276,7 @@ def percentile(values: list[float], p: float) -> float:
 
 
 def summarize(run: Run, usd_per_gpu_hour: dict[str, float]) -> Summary:
-    """Latency percentiles, throughput, and cost per million output tokens.
+    """Latency percentiles, throughput, and cost per million output tokens and per 1,000 requests.
 
     Every GPU is billed from time 0 to the last finish, idle time included.
     `usd_per_gpu_hour` maps GPU name to price, like a provider's price list.
@@ -293,4 +294,5 @@ def summarize(run: Run, usd_per_gpu_hour: dict[str, float]) -> Summary:
         max_gap_p99_s=percentile(gaps, 99) if gaps else math.nan,
         output_tokens_per_s=tokens / run.end_s,
         usd_per_million_output_tokens=usd_per_hour * run.end_s / 3600 / tokens * 1e6,
+        usd_per_1k_requests=usd_per_hour * run.end_s / 3600 / len(run.served) * 1000,
     )

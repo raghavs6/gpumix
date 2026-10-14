@@ -91,6 +91,11 @@ class Plan:
     setup: str
     provider: str
     summary: Summary
+    gpus: dict[str, int]  # GPU name -> count
+
+    def meets(self, target: Target) -> bool:
+        s = self.summary
+        return s.ttft_p99_s <= target.ttft_s and s.tpot_p99_s <= target.tpot_s
 
 
 def server_link(gpu: GPU, links: dict[str, Link]) -> Link | None:
@@ -119,14 +124,13 @@ def setups(gpus: list[GPU], max_gpus: int, links: dict[str, Link]) -> list[Setup
     return found
 
 
-def search(
+def evaluate(
     model: Model,
     requests: list[Request],
-    target: Target = SERVER,
     gpu_names: tuple[str, ...] = ("H100-SXM", "MI300X"),
     max_gpus: int = 8,
 ) -> list[Plan]:
-    """Every setup and provider that meets `target`, cheapest first."""
+    """Every setup at every provider that rents all its GPUs, whether or not it is fast enough."""
     all_gpus, links, prices = load_gpus(), load_links(), load_prices()
     gpus = [all_gpus[name] for name in gpu_names]
     plans = []
@@ -139,6 +143,22 @@ def search(
             if not all(name in provider.usd_per_gpu_hour for name in run.gpus):
                 continue
             s = summarize(run, provider.usd_per_gpu_hour)
-            if s.ttft_p99_s <= target.ttft_s and s.tpot_p99_s <= target.tpot_s:
-                plans.append(Plan(str(setup), provider.name, s))
-    return sorted(plans, key=lambda plan: plan.summary.usd_per_million_output_tokens)
+            plans.append(Plan(str(setup), provider.name, s, run.gpus))
+    return plans
+
+
+def passing(plans: list[Plan], target: Target) -> list[Plan]:
+    """The plans that meet `target`, cheapest first."""
+    ok = [p for p in plans if p.meets(target)]
+    return sorted(ok, key=lambda plan: plan.summary.usd_per_million_output_tokens)
+
+
+def search(
+    model: Model,
+    requests: list[Request],
+    target: Target = SERVER,
+    gpu_names: tuple[str, ...] = ("H100-SXM", "MI300X"),
+    max_gpus: int = 8,
+) -> list[Plan]:
+    """Every setup and provider that meets `target`, cheapest first."""
+    return passing(evaluate(model, requests, gpu_names, max_gpus), target)

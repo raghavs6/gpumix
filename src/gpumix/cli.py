@@ -1,4 +1,4 @@
-"""Command line: `gpumix gpus`, `gpumix synth` and `gpumix plan`."""
+"""Command line: `gpumix gpus`, `gpumix synth`, `gpumix plan` and `gpumix report`."""
 
 from pathlib import Path
 from typing import Annotated
@@ -8,7 +8,8 @@ import typer
 from gpumix.gpus import load_gpus
 from gpumix.models import load_models
 from gpumix.prices import load_prices
-from gpumix.search import INTERACTIVE, SERVER, Target, search
+from gpumix.report import chart_svg, report_markdown
+from gpumix.search import INTERACTIVE, SERVER, Target, evaluate, passing
 from gpumix.traffic import read_traffic, synth, write_traffic
 
 app = typer.Typer(help="Find the cheapest GPU setup for your LLM traffic.", no_args_is_help=True)
@@ -21,6 +22,22 @@ def table(rows: list[list[str]]) -> str:
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
     return "\n".join(
         "  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)).rstrip() for row in rows
+    )
+
+
+def parse_limits(model: str, target: str, ttft_ms: float | None, tpot_ms: float | None) -> Target:
+    """Check the model name and turn the target options into latency limits."""
+    models = load_models()
+    if model not in models:
+        raise typer.BadParameter(
+            f"unknown model; choose from {', '.join(models)}", param_hint="--model"
+        )
+    presets = {"server": SERVER, "interactive": INTERACTIVE}
+    if target not in presets:
+        raise typer.BadParameter("choose server or interactive", param_hint="--target")
+    return Target(
+        ttft_s=ttft_ms / 1000 if ttft_ms is not None else presets[target].ttft_s,
+        tpot_s=tpot_ms / 1000 if tpot_ms is not None else presets[target].tpot_s,
     )
 
 
@@ -80,23 +97,12 @@ def plan(
     top: Annotated[int, typer.Option(help="How many setups to show.")] = 10,
 ) -> None:
     """Rank every setup of up to 8 GPUs that meets the latency target, cheapest first."""
-    models = load_models()
-    if model not in models:
-        raise typer.BadParameter(
-            f"unknown model; choose from {', '.join(models)}", param_hint="--model"
-        )
-    presets = {"server": SERVER, "interactive": INTERACTIVE}
-    if target not in presets:
-        raise typer.BadParameter("choose server or interactive", param_hint="--target")
-    limits = Target(
-        ttft_s=ttft_ms / 1000 if ttft_ms is not None else presets[target].ttft_s,
-        tpot_s=tpot_ms / 1000 if tpot_ms is not None else presets[target].tpot_s,
-    )
+    limits = parse_limits(model, target, ttft_ms, tpot_ms)
     requests = read_traffic(traffic)
     typer.echo(
         f"Simulating {len(requests)} requests on every setup; this can take minutes...", err=True
     )
-    plans = search(models[model], requests, limits)
+    plans = passing(evaluate(load_models()[model], requests), limits)
 
     typer.echo(WARNING)
     typer.echo(
@@ -120,3 +126,33 @@ def plan(
         )
     typer.echo(table(rows))
     typer.echo(f"{len(plans)} setups pass; showing the cheapest {min(top, len(plans))}.")
+
+
+@app.command()
+def report(
+    traffic: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="Traffic JSONL file.")
+    ],
+    out: Annotated[Path, typer.Option(help="Markdown file to write; the chart goes next to it.")],
+    model: Annotated[str, typer.Option(help="Model name from models.yaml.")] = "qwen3-8b",
+    target: Annotated[
+        str, typer.Option(help="MLPerf latency limits: server or interactive.")
+    ] = "server",
+    ttft_ms: Annotated[
+        float | None, typer.Option(help="Override the p99 time-to-first-token limit.")
+    ] = None,
+    tpot_ms: Annotated[
+        float | None, typer.Option(help="Override the p99 time-per-token limit.")
+    ] = None,
+) -> None:
+    """Write a Markdown report with the ranking and a cost-vs-latency chart."""
+    limits = parse_limits(model, target, ttft_ms, tpot_ms)
+    requests = read_traffic(traffic)
+    typer.echo(
+        f"Simulating {len(requests)} requests on every setup; this can take minutes...", err=True
+    )
+    plans = evaluate(load_models()[model], requests)
+    chart = out.with_suffix(".svg")
+    chart.write_text(chart_svg(plans, limits))
+    out.write_text(report_markdown(plans, limits, requests, traffic.name, model, chart.name))
+    typer.echo(f"wrote {out} and {chart}")
