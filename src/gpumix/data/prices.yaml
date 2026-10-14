@@ -1,0 +1,23 @@
+# On-demand rental prices, in US dollars per GPU per hour.
+#
+# One entry per cloud provider, read from that provider's pricing page on
+# the `checked` date. Only on-demand prices: no reserved, contract or spot
+# rates, because those need a commitment the planner can't assume. Only
+# providers that rent both an NVIDIA and an AMD GPU, so a mixed setup is
+# priced like one you could actually rent in one place.
+
+- name: digitalocean
+  usd_per_gpu_hour:
+    H100-SXM: 4.41
+    MI300X: 2.59
+  source: https://www.digitalocean.com/pricing/gpu-droplets
+  checked: 2026-10-14
+  note: Page says "New pricing is effective as of August 1, 2026". H100 is HGX (SXM).
+
+- name: crusoe
+  usd_per_gpu_hour:
+    H100-SXM: 3.90
+    MI300X: 3.45
+  source: https://crusoe.ai/cloud/pricing
+  checked: 2026-10-14
+  note: H100 listed as "H100 80GB HGX" (SXM). Page shows no effective date.

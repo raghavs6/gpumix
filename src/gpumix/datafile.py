@@ -1,4 +1,4 @@
-"""Shared loader for the YAML data files (GPUs, models)."""
+"""Shared loader for the YAML data files (GPUs, models, prices)."""
 
 from importlib.resources import files
 from importlib.resources.abc import Traversable
