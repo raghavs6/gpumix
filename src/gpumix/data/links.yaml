@@ -1,0 +1,45 @@
+# Links the KV cache can travel over, from a prefill GPU to a decode GPU.
+#
+# Speeds are ONE-WAY, in GB/s (10^9 bytes per second), because the KV
+# cache only flows one way. Vendors often quote both directions added
+# together; `note` says how each number was converted. Network speeds are
+# quoted in bits, so 400 Gb/s / 8 = 50 GB/s.
+#
+# `vendors` is which GPU vendors can use the link. NVLink and Infinity
+# Fabric only join GPUs of their own vendor inside one machine, so a
+# cross-vendor KV transfer has to go over the network.
+
+- name: nvlink-h100
+  vendors: [nvidia]
+  gbytes_per_s: 450
+  source: https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/
+  checked: 2026-10-14
+  note: 18 links x 25 GB/s "in each direction" = 450 GB/s one way (NVIDIA's "900 GB/sec total" counts both).
+
+- name: infinity-fabric-mi300x
+  vendors: [amd]
+  gbytes_per_s: 64
+  source: https://www.crusoe.ai/cloud/gpus/amd-mi300x
+  checked: 2026-10-14
+  note: '"128 GB/s bidirectional bandwidth between each GPU" = 64 GB/s one way.'
+
+- name: infiniband-400g
+  vendors: [nvidia, amd]
+  gbytes_per_s: 50
+  source: https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/nvidia-dgx-h100-datasheet.pdf
+  checked: 2026-10-14
+  note: DGX H100 has one ConnectX-7 "400 Gb/s InfiniBand" port per GPU; 400 / 8 = 50 GB/s.
+
+- name: ethernet-200g
+  vendors: [nvidia, amd]
+  gbytes_per_s: 25
+  source: https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/nvidia-dgx-h100-datasheet.pdf
+  checked: 2026-10-14
+  note: The same ConnectX-7 ports run "200 Gb/s Ethernet"; 200 / 8 = 25 GB/s.
+
+- name: ethernet-100g
+  vendors: [nvidia, amd]
+  gbytes_per_s: 12.5
+  source: https://www.ieee802.org/3/ba/
+  checked: 2026-10-14
+  note: 100 Gb/s Ethernet (IEEE 802.3ba); 100 / 8 = 12.5 GB/s. A worst case for cross-vendor traffic.
