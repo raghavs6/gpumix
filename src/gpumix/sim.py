@@ -98,6 +98,8 @@ def simulate(
     token_budget: int | None = None,
     max_seqs: int | None = None,
     prefilled: bool = False,
+    tp: int = 1,
+    tp_link: Link | None = None,
 ) -> Run:
     """Replay `requests` (sorted by arrival) through one GPU.
 
@@ -105,12 +107,16 @@ def simulate(
     (conversations in progress at once) default to vLLM's values for this GPU.
     With `prefilled`, prompts arrive already in the KV cache (sent by a
     prefill GPU), so this GPU only decodes: the first token takes one step.
+    With `tp` > 1 the "GPU" is a group of `tp` GPUs running one copy of the
+    model with tensor parallelism over `tp_link`.
     Raises ValueError if a single request needs more KV cache than the GPU has.
     """
     default_budget, default_seqs = vllm_defaults(gpu)
     budget = token_budget or default_budget
     seqs = max_seqs or default_seqs
-    capacity = memory_fit(gpu, model).kv_tokens
+    if tp > 1 and (tp_link is None or gpu.vendor not in tp_link.vendors):
+        raise ValueError(f"tensor parallelism on {gpu.name} needs a link that joins its GPUs")
+    capacity = memory_fit(gpu, model, tp=tp).kv_tokens
     for r in requests:
         if r.input_tokens + r.output_tokens > capacity:
             raise ValueError(
@@ -169,7 +175,7 @@ def simulate(
         cached = sum(s.request.input_tokens + s.generated for s in decoding) + sum(
             s.prefilled for s, _ in chunks
         )
-        now += step_seconds(gpu, model, new, cached)
+        now += step_seconds(gpu, model, new, cached, tp=tp, tp_link=tp_link)
 
         for s in decoding:
             s._emit(now)
@@ -181,7 +187,7 @@ def simulate(
             reserved -= size(s)
             running.remove(s)
 
-    return Run(served=served, end_s=now, gpus={gpu.name: 1})
+    return Run(served=served, end_s=now, gpus={gpu.name: tp})
 
 
 def simulate_replicas(
@@ -198,7 +204,7 @@ def simulate_replicas(
         run = simulate(gpu, model, requests[k::count], **options)
         served[k::count] = run.served
         end_s = max(end_s, run.end_s)
-    return Run(served=served, end_s=end_s, gpus={gpu.name: count})
+    return Run(served=served, end_s=end_s, gpus={gpu.name: count * options.get("tp", 1)})
 
 
 def simulate_split(
@@ -236,8 +242,9 @@ def simulate_split(
     served = [Served(r) for r in requests]
     for i, s in zip(order, decode.served, strict=True):
         served[i] = replace(s, request=requests[i])  # time-to-first-token from the real arrival
-    gpus = {prefill_gpu.name: prefill_count}
-    gpus[decode_gpu.name] = gpus.get(decode_gpu.name, 0) + decode_count
+    gpus = dict(prefill.gpus)
+    for name, n in decode.gpus.items():
+        gpus[name] = gpus.get(name, 0) + n
     return Run(served=served, end_s=decode.end_s, gpus=gpus)
 
 

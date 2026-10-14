@@ -8,6 +8,10 @@
 # `vendors` is which GPU vendors can use the link. NVLink and Infinity
 # Fabric only join GPUs of their own vendor inside one machine, so a
 # cross-vendor KV transfer has to go over the network.
+#
+# `allreduce_latency_us` is the measured fixed delay of one small
+# all-reduce (the swap tensor parallelism does twice per layer), by number
+# of GPUs. Only links with a measured value can run tensor parallelism.
 
 - name: nvlink-h100
   vendors: [nvidia]
@@ -15,6 +19,12 @@
   source: https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/
   checked: 2026-10-14
   note: 18 links x 25 GB/s "in each direction" = 450 GB/s one way (NVIDIA's "900 GB/sec total" counts both).
+  allreduce_latency_us: {2: 6.45, 4: 9.0, 8: 17.24}
+  allreduce_source: https://github.com/NVIDIA/nccl/issues/1259
+  allreduce_note: >-
+    nccl-tests all_reduce_perf on an HGX 8x H100 node, NCCL 2.20.5, CUDA graphs on,
+    8 KB rows (one decode token's swap is 4096 x 2 B = 8 KB). The 4-GPU value is the
+    poster's "around 9us"; they posted no table for it.
 
 - name: infinity-fabric-mi300x
   vendors: [amd]

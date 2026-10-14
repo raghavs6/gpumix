@@ -25,18 +25,21 @@ def memory_fit(
     model: Model,
     utilization: float = DEFAULT_UTILIZATION,
     bytes_per_param: int = 2,
+    tp: int = 1,
 ) -> MemoryFit:
     """Split one GPU's usable memory into model weights and KV cache.
 
     `utilization` is the share of memory the server may use; the rest is
     left for scratch space and the software itself. `bytes_per_param`
-    defaults to 2 (BF16).
+    defaults to 2 (BF16). With tensor parallelism over `tp` GPUs, each GPU
+    holds 1/tp of the weights and 1/tp of every token's KV; `weights_gb`
+    and `kv_cache_gb` are per GPU and `kv_tokens` is for the whole group.
     """
     usable = gpu.memory_gb * GB * utilization
-    weights = model.weight_bytes(bytes_per_param)
+    weights = model.weight_bytes(bytes_per_param) / tp
     kv_room = max(usable - weights, 0.0)
     return MemoryFit(
         weights_gb=weights / GB,
         kv_cache_gb=kv_room / GB,
-        kv_tokens=int(kv_room // model.kv_bytes_per_token()),
+        kv_tokens=int(kv_room * tp // model.kv_bytes_per_token()),
     )

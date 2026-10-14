@@ -37,3 +37,11 @@ def test_fp8_weights_leave_more_room():
     fp8 = memory_fit(GPUS["H100-SXM"], QWEN, bytes_per_param=1)
     assert fp8.weights_gb == pytest.approx(8.2)
     assert fp8.kv_tokens > bf16.kv_tokens
+
+
+def test_tp2_splits_weights_and_pools_kv_room():
+    # each H100 holds 8.2 GB of weights, leaving 63.8 GB, and half of every
+    # token's KV (73,728 B): 2 x 63.8e9 // 147,456 = 865,342 tokens across the pair
+    fit = memory_fit(GPUS["H100-SXM"], QWEN, tp=2)
+    assert fit.weights_gb == pytest.approx(8.2)
+    assert fit.kv_tokens == 865_342

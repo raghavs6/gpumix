@@ -1,6 +1,6 @@
 import pytest
 
-from gpumix.links import load_links, transfer_seconds
+from gpumix.links import allreduce_seconds, load_links, transfer_seconds
 from gpumix.models import load_models
 
 LINKS = load_links()
@@ -42,3 +42,15 @@ def test_efficiency_slows_transfer():
     assert transfer_seconds(QWEN, 1000, LINKS["ethernet-100g"], efficiency=0.5) == pytest.approx(
         2 * ideal
     )
+
+
+def test_only_nvlink_has_measured_allreduce_delays():
+    assert LINKS["nvlink-h100"].allreduce_latency_us == {2: 6.45, 4: 9.0, 8: 17.24}
+    others = [link for name, link in LINKS.items() if name != "nvlink-h100"]
+    assert all(link.allreduce_latency_us == {} for link in others)
+
+
+def test_allreduce_is_delay_plus_ring_traffic():
+    # 4 GPUs: each sends 2 x 3/4 of the 8 MB array
+    t = allreduce_seconds(LINKS["nvlink-h100"], 4, 8e6)
+    assert t == pytest.approx(9.0e-6 + 1.5 * 8e6 / 450e9)

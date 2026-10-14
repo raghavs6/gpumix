@@ -1,8 +1,9 @@
 import pytest
 
 from gpumix.gpus import load_gpus
+from gpumix.links import load_links
 from gpumix.models import load_models
-from gpumix.perf import decode_step_seconds, prefill_seconds
+from gpumix.perf import decode_step_seconds, prefill_seconds, step_seconds
 
 GPUS = load_gpus()
 H100, MI300X = GPUS["H100-SXM"], GPUS["MI300X"]
@@ -49,3 +50,31 @@ def test_efficiency_slows_things_down():
         2 * ideal
     )
     assert prefill_seconds(H100, QWEN, 1000, compute_efficiency=0.5) > 30 * MS
+
+
+NVLINK = load_links()["nvlink-h100"]
+SWAP = 2 * 36  # two all-reduces per layer, 36 layers
+
+
+def test_tp2_decode_halves_reads_and_adds_swaps():
+    # each GPU reads half of (16.4 GB weights + 1000 tokens of KV): about 2.5 ms.
+    # 72 swaps of one token's activations (4096 x 2 B = 8 KB): 6.45 us delay each,
+    # plus 8 KB over 450 GB/s (a 2-GPU ring sends the whole array once)
+    reads = (16.4e9 + 1000 * 147_456) / 2 / 3.35e12
+    swaps = SWAP * (6.45e-6 + 8192 / 450e9)
+    t = step_seconds(H100, QWEN, 1, 1000, tp=2, tp_link=NVLINK)
+    assert t == pytest.approx(reads + swaps)  # about 2.47 + 0.47 = 2.94 ms vs 4.94 ms on one GPU
+
+
+def test_tp2_prefill_halves_math_and_adds_swaps():
+    math = 2 * 8.2e9 * 1000 / 2 / 989.5e12  # 8.3 ms
+    swaps = SWAP * (6.45e-6 + 1000 * 8192 / 450e9)  # 0.46 ms delay + 1.31 ms sending
+    t = step_seconds(H100, QWEN, 1000, 0, tp=2, tp_link=NVLINK)
+    assert t == pytest.approx(math + swaps)  # about 10.1 ms vs 16.6 ms on one GPU
+
+
+def test_tp_needs_a_measured_delay_for_that_gpu_count():
+    with pytest.raises(ValueError, match="no measured all-reduce delay for 3 GPUs"):
+        step_seconds(H100, QWEN, 1, 1000, tp=3, tp_link=NVLINK)
+    with pytest.raises(ValueError, match="needs a tp_link"):
+        step_seconds(H100, QWEN, 1, 1000, tp=2)
