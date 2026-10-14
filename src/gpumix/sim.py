@@ -215,6 +215,8 @@ def simulate_split(
     link: Link,
     prefill_count: int = 1,
     decode_count: int = 1,
+    prefill_options: dict[str, Any] | None = None,
+    decode_options: dict[str, Any] | None = None,
     **options: Any,
 ) -> Run:
     """Replay `requests` through separate prefill and decode GPUs.
@@ -225,19 +227,26 @@ def simulate_split(
     round robin. Prefill GPUs never wait on decode GPUs, so the two pools
     run as two passes. Each transfer gets the whole link to itself, and the
     prefill GPU frees the prompt's KV as soon as the prompt is done.
+
+    `options` go to both pools; `prefill_options` and `decode_options` add
+    to them for one pool, such as a different tensor-parallel size.
     """
     for gpu in (prefill_gpu, decode_gpu):
         if gpu.vendor not in link.vendors:
             raise ValueError(f"{link.name} can't connect {gpu.vendor} GPUs")
 
     prompts = [r.model_copy(update={"output_tokens": 1}) for r in requests]
-    prefill = simulate_replicas(prefill_gpu, model, prompts, prefill_count, **options)
+    prefill_opts = options | (prefill_options or {})
+    decode_opts = options | (decode_options or {})
+    prefill = simulate_replicas(prefill_gpu, model, prompts, prefill_count, **prefill_opts)
     landed = [
         s.finish_s + transfer_seconds(model, s.request.input_tokens, link) for s in prefill.served
     ]
     order = sorted(range(len(requests)), key=lambda i: landed[i])
     handoffs = [requests[i].model_copy(update={"arrival_s": landed[i]}) for i in order]
-    decode = simulate_replicas(decode_gpu, model, handoffs, decode_count, prefilled=True, **options)
+    decode = simulate_replicas(
+        decode_gpu, model, handoffs, decode_count, prefilled=True, **decode_opts
+    )
 
     served = [Served(r) for r in requests]
     for i, s in zip(order, decode.served, strict=True):

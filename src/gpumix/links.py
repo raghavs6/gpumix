@@ -18,6 +18,7 @@ class Link(Entry):
     source: HttpUrl
     checked: date
     note: str | None = None
+    gpu: str | None = None  # in-machine links: the GPU they join; None for networks
     allreduce_latency_us: dict[int, PositiveFloat] = {}  # GPU count -> measured delay
     allreduce_source: HttpUrl | None = None
     allreduce_note: str | None = None

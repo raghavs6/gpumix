@@ -7,7 +7,8 @@
 #
 # `vendors` is which GPU vendors can use the link. NVLink and Infinity
 # Fabric only join GPUs of their own vendor inside one machine, so a
-# cross-vendor KV transfer has to go over the network.
+# cross-vendor KV transfer has to go over the network. `gpu` names the
+# one GPU model an in-machine link joins.
 #
 # `allreduce_latency_us` is the measured fixed delay of one small
 # all-reduce (the swap tensor parallelism does twice per layer), by number
@@ -15,6 +16,7 @@
 
 - name: nvlink-h100
   vendors: [nvidia]
+  gpu: H100-SXM
   gbytes_per_s: 450
   source: https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/
   checked: 2026-10-14
@@ -28,6 +30,7 @@
 
 - name: infinity-fabric-mi300x
   vendors: [amd]
+  gpu: MI300X
   gbytes_per_s: 64
   source: https://www.crusoe.ai/cloud/gpus/amd-mi300x
   checked: 2026-10-14
