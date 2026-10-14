@@ -22,11 +22,19 @@ def write(tmp_path: Path, text: str) -> Path:
     return path
 
 
-def test_shipped_file_loads_h100_and_mi300x():
+def test_shipped_file_loads_all_gpus():
     gpus = load_gpus()
-    assert set(gpus) == {"H100-SXM", "MI300X"}
+    assert set(gpus) == {"H100-SXM", "H200-SXM", "B200", "L40S", "MI300X", "MI325X", "MI355X"}
     assert gpus["H100-SXM"].vendor == "nvidia"
     assert gpus["MI300X"].memory_gb == 192
+
+
+def test_h200_is_h100_compute_with_faster_memory():
+    # Same Hopper chip, so a halving slip on either sparse number would show here.
+    gpus = load_gpus()
+    h100, h200 = gpus["H100-SXM"], gpus["H200-SXM"]
+    assert h200.bf16_dense_tflops == h100.bf16_dense_tflops
+    assert h200.mem_bandwidth_tbps > h100.mem_bandwidth_tbps
 
 
 def test_valid_entry_loads(tmp_path):
