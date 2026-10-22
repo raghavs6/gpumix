@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Stand-in for the vllm CLI so tests can run scripts/bench.sh without a GPU.
+
+`vllm serve` answers /health; `vllm bench serve` writes a result file shaped
+like the real one, where every request gets exactly the lengths it asked for.
+"""
+
+import http.server
+import json
+import sys
+from pathlib import Path
+
+
+def option(name):
+    return sys.argv[sys.argv.index(name) + 1]
+
+
+if sys.argv[1] == "--version":
+    print("0.32.0")
+elif sys.argv[1] == "serve":
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200 if self.path == "/health" else 404)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    http.server.HTTPServer(("127.0.0.1", int(option("--port"))), Health).serve_forever()
+elif sys.argv[1:3] == ["bench", "serve"]:
+    rows = [json.loads(line) for line in Path(option("--dataset-path")).read_text().splitlines()]
+    assert len(rows) == int(option("--num-prompts"))
+    out = [len(r["output_length"] * [0]) for r in rows]
+    result = {
+        "duration": 1.0,
+        "input_lens": [min(r["input_length"], 16 * len(r["hash_ids"])) for r in rows],
+        "output_lens": out,
+        "ttfts": [0.01] * len(rows),
+        "latencies": [0.01 + 0.002 * (n - 1) for n in out],
+        "itls": [[0.002] * (n - 1) for n in out],
+        "errors": [""] * len(rows),
+    }
+    Path(option("--result-dir"), option("--result-filename")).write_text(json.dumps(result))

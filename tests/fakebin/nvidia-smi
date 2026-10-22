@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "name, memory.total [MiB], clocks.max.sm [MHz], power.limit [W]"
+echo "${FAKE_GPU_NAME:-NVIDIA H100 80GB HBM3}, 81559 MiB, 1980 MHz, 700.00 W"
