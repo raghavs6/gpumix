@@ -2,7 +2,7 @@ import statistics
 
 import pytest
 
-from gpumix.traffic import Request, read_traffic, synth, write_traffic
+from gpumix.traffic import Request, read_traffic, synth, window, write_traffic
 
 
 def test_round_trip(tmp_path):
@@ -60,3 +60,18 @@ def test_synth_has_a_long_tail():
     inputs = sorted(r.input_tokens for r in requests)
     p99 = inputs[int(0.99 * len(inputs))]
     assert p99 > 5 * 800  # lognormal, sigma 1: p99 is about e^2.33 = 10x the median
+
+
+def test_window_keeps_start_drops_end_and_restarts_the_clock():
+    requests = [
+        Request(arrival_s=t, input_tokens=5, output_tokens=3) for t in (9.0, 10.0, 12.5, 20.0)
+    ]
+    assert window(requests, start_s=10, duration_s=10) == [
+        Request(arrival_s=0.0, input_tokens=5, output_tokens=3),
+        Request(arrival_s=2.5, input_tokens=5, output_tokens=3),
+    ]
+
+
+def test_window_keeps_a_quiet_start():
+    requests = [Request(arrival_s=13.0, input_tokens=5, output_tokens=3)]
+    assert window(requests, start_s=10, duration_s=10)[0].arrival_s == 3.0

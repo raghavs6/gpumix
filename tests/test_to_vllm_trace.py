@@ -10,9 +10,9 @@ SCRIPT = Path(__file__).parent.parent / "scripts" / "to_vllm_trace.py"
 AZURE_CHAT = Path(__file__).parent.parent / "data" / "traces" / "azure2023_conv.jsonl"
 
 
-def run(traffic_path, out_path):
+def run(traffic_path, out_path, *options):
     result = subprocess.run(
-        [sys.executable, SCRIPT, traffic_path, out_path], capture_output=True, text=True
+        [sys.executable, SCRIPT, traffic_path, out_path, *options], capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
     return [json.loads(line) for line in out_path.read_text().splitlines()]
@@ -42,3 +42,9 @@ def test_azure_chat_trace(tmp_path):
     assert len(ids) == len(set(ids))
     timestamps = [r["timestamp"] for r in rows]
     assert timestamps == sorted(timestamps)
+
+
+def test_azure_chat_window(tmp_path):
+    rows = run(AZURE_CHAT, tmp_path / "out.jsonl", "--start-s", "600", "--duration-s", "600")
+    assert len(rows) == 3118
+    assert 0 <= rows[0]["timestamp"] and rows[-1]["timestamp"] < 600

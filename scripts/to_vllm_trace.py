@@ -8,6 +8,9 @@ cache would skip re-reading them; the model assumes every prompt is read in
 full, so ids are never reused.
 
     python scripts/to_vllm_trace.py data/traces/azure2023_conv.jsonl conv.vllm.jsonl
+
+With --start-s and --duration-s, only that window of the trace is kept, with
+times counted from --start-s.
 """
 
 import argparse
@@ -15,7 +18,7 @@ import json
 import math
 from pathlib import Path
 
-from gpumix.traffic import Request, read_traffic
+from gpumix.traffic import Request, read_traffic, window
 
 TOKENS_PER_HASH_ID = 16  # vLLM's --timed-trace-chunk-hash-size default
 
@@ -41,8 +44,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("traffic_path", type=Path)
     parser.add_argument("vllm_trace_path", type=Path)
+    parser.add_argument("--start-s", type=float, default=0.0)
+    parser.add_argument("--duration-s", type=float, default=math.inf)
     args = parser.parse_args()
-    rows = to_vllm(read_traffic(args.traffic_path))
+    rows = to_vllm(window(read_traffic(args.traffic_path), args.start_s, args.duration_s))
     args.vllm_trace_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     print(f"wrote {len(rows)} requests to {args.vllm_trace_path}")
 

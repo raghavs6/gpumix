@@ -71,3 +71,16 @@ def synth(
             )
         )
     return requests
+
+
+def window(requests: list[Request], start_s: float, duration_s: float) -> list[Request]:
+    """Keep the requests arriving in [start_s, start_s + duration_s), with the clock restarted.
+
+    Arrival times are shifted by start_s, not by the first kept arrival, so any
+    quiet gap at the start of the window stays in.
+    """
+    return [
+        r.model_copy(update={"arrival_s": r.arrival_s - start_s})
+        for r in requests
+        if start_s <= r.arrival_s < start_s + duration_s
+    ]
