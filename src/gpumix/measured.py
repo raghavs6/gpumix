@@ -57,3 +57,15 @@ def summarize_vllm(
         usd_per_million_output_tokens=usd_per_hour * duration / 3600 / tokens * 1e6,
         usd_per_1k_requests=usd_per_hour * duration / 3600 / len(rows) * 1000,
     )
+
+
+def read_vllm_trace(path: Path) -> list[Request]:
+    """The requests in a trace written by scripts/to_vllm_trace.py."""
+    return [
+        Request(
+            arrival_s=row["timestamp"],
+            input_tokens=row["input_length"],
+            output_tokens=row["output_length"],
+        )
+        for row in map(json.loads, path.read_text().splitlines())
+    ]

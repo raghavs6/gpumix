@@ -100,6 +100,8 @@ def simulate(
     prefilled: bool = False,
     tp: int = 1,
     tp_link: Link | None = None,
+    compute_efficiency: float = 1.0,
+    memory_efficiency: float = 1.0,
 ) -> Run:
     """Replay `requests` (sorted by arrival) through one GPU.
 
@@ -109,6 +111,8 @@ def simulate(
     prefill GPU), so this GPU only decodes: the first token takes one step.
     With `tp` > 1 the "GPU" is a group of `tp` GPUs running one copy of the
     model with tensor parallelism over `tp_link`.
+    The efficiencies are the share of the spec-sheet math and memory speed
+    the GPU really gets (1.0 is the ideal; phase 4 measures them).
     Raises ValueError if a single request needs more KV cache than the GPU has.
     """
     default_budget, default_seqs = vllm_defaults(gpu)
@@ -175,7 +179,9 @@ def simulate(
         cached = sum(s.request.input_tokens + s.generated for s in decoding) + sum(
             s.prefilled for s, _ in chunks
         )
-        now += step_seconds(gpu, model, new, cached, tp=tp, tp_link=tp_link)
+        now += step_seconds(
+            gpu, model, new, cached, compute_efficiency, memory_efficiency, tp, tp_link
+        )
 
         for s in decoding:
             s._emit(now)

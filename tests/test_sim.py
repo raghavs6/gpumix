@@ -249,3 +249,20 @@ def test_tp_split_counts_both_pools():
 def test_tp_on_mi300x_is_refused_without_a_link_that_joins_it():
     with pytest.raises(ValueError, match="needs a link that joins its GPUs"):
         simulate(MI300X, QWEN, [req(0, 1000, 1)], tp=2, tp_link=NVLINK)
+
+
+def test_half_efficiency_doubles_every_time():
+    requests = [req(0, 3000, 50), req(0.01, 500, 20)]
+    ideal = simulate(H100, QWEN, requests)
+    slow = simulate(H100, QWEN, requests, compute_efficiency=0.5, memory_efficiency=0.5)
+    for a, b in zip(ideal.served, slow.served, strict=True):
+        assert b.first_token_s == pytest.approx(2 * a.first_token_s)
+        assert b.finish_s == pytest.approx(2 * a.finish_s)
+
+
+def test_efficiencies_reach_split_pools():
+    link = load_links()["infiniband-400g"]
+    requests = [req(0, 1000, 10)]
+    ideal = simulate_split(H100, H100, QWEN, requests, link)
+    slow = simulate_split(H100, H100, QWEN, requests, link, memory_efficiency=0.5)
+    assert slow.served[0].finish_s > ideal.served[0].finish_s

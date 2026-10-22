@@ -2,6 +2,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from gpumix.calibrate import (
     DECODE_BATCHES,
     PREFILL_LENGTHS,
@@ -39,3 +41,34 @@ def test_script_writes_both_files(tmp_path):
     assert result.returncode == 0, result.stderr
     assert len(read_traffic(tmp_path / "prefill.jsonl")) == 12
     assert len(read_traffic(tmp_path / "decode.jsonl")) == 676
+
+
+def test_fit_recovers_the_efficiencies_a_gpu_was_built_with():
+    from fake_results import sweeps
+
+    from gpumix.calibrate import fit
+    from gpumix.gpus import load_gpus
+    from gpumix.models import load_models
+
+    gpu, model = load_gpus()["H100-SXM"], load_models()["qwen3-8b"]
+    prefill, decode = sweeps(gpu, model, compute=0.6, memory=0.8)
+    f = fit(gpu, model, prefill["ttfts"], decode["itls"])
+    assert f.compute_efficiency == pytest.approx(0.6)
+    assert f.memory_efficiency == pytest.approx(0.8)
+    assert set(f.prefill_points) == set(PREFILL_LENGTHS)
+    assert set(f.decode_points) == set(DECODE_BATCHES)
+
+
+def test_fit_skips_warmups():
+    from fake_results import sweeps
+
+    from gpumix.calibrate import fit
+    from gpumix.gpus import load_gpus
+    from gpumix.models import load_models
+
+    gpu, model = load_gpus()["H100-SXM"], load_models()["qwen3-8b"]
+    prefill, decode = sweeps(gpu, model, compute=0.6, memory=0.8)
+    prefill["ttfts"][0] *= 100  # a slow first request, as a cold GPU gives
+    assert fit(gpu, model, prefill["ttfts"], decode["itls"]).prefill_points[512] == pytest.approx(
+        0.6
+    )
